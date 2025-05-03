@@ -1,0 +1,15 @@
+name: cv
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - pip
+  - matplotlib
+  - numpy
+  - python
+  - pytorch
+  - torchvision
+  - scikit-learn
+  - scipy
+  - pip:
+      - opencv-contrib-python

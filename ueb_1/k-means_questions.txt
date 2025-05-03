@@ -1,0 +1,14 @@
+Das Ergebnis dieser Implementierung scheint gut zu sein. Die Pixel des Bildes werden in k kluster aufgeteilt, die die
+dominanten Farben des Bildes repräsentieren. Je mehr Cluster gewählt werden, desto "farbiger" wird das gefilterte Bild
+
+a) Was sind die Probleme dieses Clustering-Algorithmus?
+    bei k-means clustering ist das Ergebnis stark von den zu Beginn gewählten clustern abhängig (siehe Aufgabenblatt k=8,
+    dort ist das Bild fast schwarz-weiß).
+    Außerdem kann es bei diesem Algorithmus zu lokalen Minima kommen, die ein nicht-optimales Ergebnis liefern.
+
+b) Wie kann ich die Ergebnisse verbessern?
+    Die hier eingeführte initialisierungs-methode (k-means++) wählt gleich zu Beginn cluster aus, deren Pixelwerte weit
+    voneinander entfernt liegen. Im Gegensatz zur Zufallsauswahl sorgt dies dafür, dass die Pixel den Clustern
+    eindeutiger zugewiesen werden können.
+    Eine weitere Verbesserung könnte sein, den Algorithmus mehrfach hintereinander durchzuführen und die Ergebnisse zu
+    vergleichen. Dadurch könnte man gegebenenfalls lokale Minima erkennen.
