@@ -24,13 +24,15 @@ def compute_simple_hog(imgcolor, keypoints):
     # convert color to gray image and extract feature in gray
     gray = cv2.cvtColor(imgcolor, cv2.COLOR_BGR2GRAY)
 
+
     # compute x and y gradients (sobel kernel size 5)
     grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=5)
     grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=5)
 
+
     # compute magnitude and angle of the gradients
     magnitude = cv2.magnitude(grad_x, grad_y)
-    angle = cv2.phase(grad_x, grad_y, angleInDegrees=True)
+    angle = cv2.phase(grad_x, grad_y)
 
     # go through all keypoints and and compute feature vector
     descr = np.zeros((len(keypoints), 8), np.float32)
@@ -66,13 +68,13 @@ def compute_simple_hog(imgcolor, keypoints):
         hist, bins = np.histogram(
             angles_valid,
             bins=8,
-            range=(0, 7),
+            range=(0, 2 * np.pi),
             weights=mag_valid
         )
 
         hist = hist.astype(np.float32)
         if hist.sum() > 0:
-            hist /= hist.sum()
+            hist /= np.sum(hist)
 
         plot_histogram(hist, bins)
 
@@ -80,7 +82,7 @@ def compute_simple_hog(imgcolor, keypoints):
 
     return descr
 
-# in our example we only have a single keypoint 
+# in our example we only have a single keypoint
 keypoints = [cv2.KeyPoint(15, 15, 11)]
 
 # test for all test images
