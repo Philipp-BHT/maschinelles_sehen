@@ -49,18 +49,15 @@ def compute_simple_hog(imgcolor, keypoints):
         x, y = int(kp.pt[0]), int(kp.pt[1])
         size = int(kp.size // 2)
 
-        # Define patch window around the keypoint
         x0, x1 = x - size, x + size + 1
         y0, y1 = y - size, y + size + 1
 
-        # Clip to image bounds
         x0, x1 = max(x0, 0), min(x1, gray.shape[1])
         y0, y1 = max(y0, 0), min(y1, gray.shape[0])
 
         mag_patch = magnitude[y0:y1, x0:x1]
         angle_patch = angle[y0:y1, x0:x1]
 
-        # Use only pixels with non-zero magnitude
         valid_mask = mag_patch > 0
         angles_valid = angle_patch[valid_mask]
         mag_valid = mag_patch[valid_mask]
