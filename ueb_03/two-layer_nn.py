@@ -13,6 +13,7 @@ num_epochs = 500
 batch_size = 4
 
 loss_mode = 'mse'
+# loss_mode = 'crossentropy'
 
 loss_train_hist = []
 
@@ -120,7 +121,22 @@ def forward(X_batch, y_batch, W1, W2, b1, b2):
     #
 
     # the function should return the loss and both intermediate activations
-    #return loss, a2, a1, m1
+
+    m1 = X_batch @ W1 + b1
+    a1 = relu(m1)
+
+    m2 = a1 @ W2 + b2
+
+    if loss_mode == 'crossentropy':
+        a2 = softmax(m2)
+        loss = loss_crossentropy(a2, y_batch)
+    elif loss_mode == 'mse':
+        a2 = relu(m2)
+        loss = loss_mse(a2, y_batch)
+    else:
+        raise ValueError("Unknown loss mode")
+
+    return loss, a2, a1, m1
 
 
 def backward(a2, a1, X_batch, y_batch, W2, m1):
@@ -132,9 +148,28 @@ def backward(a2, a1, X_batch, y_batch, W2, m1):
     # please use the appropriate loss functions
     # YOUR CODE HERE
 
+    # X_batch → W1, b1 → ReLU → a1 → W2, b2 → a2 → Loss
+
+    if loss_mode == 'crossentropy':
+        dCda2 = loss_deriv_crossentropy(a2.copy(), y_batch)
+    elif loss_mode == 'mse':
+        dCda2 = loss_deriv_mse(a2, y_batch)
+    else:
+        raise ValueError("Unknown loss mode")
+
+    dCdW2 = a1.T @ dCda2  # (hidden_size x num_classes)
+    dCdb2 = np.sum(dCda2, axis=0, keepdims=True)  # (1 x num_classes)
+
+    # === Step 3: Backprop through ReLU ===
+    dm1 = (dCda2 @ W2.T) * relu_derivative(m1)
+
+    # === Step 4: dC/dW1 and dC/db1 ===
+    dCdW1 = X_batch.T @ dm1  # (input_size x hidden_size)
+    dCdb1 = np.sum(dm1, axis=0, keepdims=True)  # (1 x hidden_size)
+
     # function should return 4 derivatives with respect to
     # W1, W2, b1, b2
-    # return dCdW1, dCdW2, dCdb1, dCdb2
+    return dCdW1, dCdW2, dCdb1, dCdb2
 
 
 def train(X_train, y_train):
@@ -144,29 +179,38 @@ def train(X_train, y_train):
     # given very small trainings database and the following parameters.
     h = 1500
     std = 0.001
+
     # YOUR CODE HERE
     # initialize W1, W2, b1, b2 randomly
     # Note: W1, W2 should be scaled by variable std
+    input_dim = X_train.shape[1]
+    W1 = std * np.random.randn(input_dim, h)
+    b1 = np.random.randn(1, h)
+    W2 = std * np.random.randn(h, num_classes)
+    b2 = np.random.randn(1, num_classes)
 
     # run for num_epochs
     for i in range(num_epochs):
-
-        X_batch = None
-        y_batch = None
 
         # use only a batch of batch_size of the training images in each run
         # sample the batch images randomly from the training set
         # YOUR CODE HERE
 
+        indices = np.random.choice(X_train.shape[0], batch_size, replace=False)
+        X_batch = X_train[indices]
+        y_batch = y_train[indices]
+
         # forward pass for two-layer neural network using ReLU as activation function
+        loss, a2, a1, m1 = forward(X_batch, y_batch, W1, W2, b1, b2)
 
         # add loss to loss_train_hist for plotting
+        loss_train_hist.append(loss)
 
-        #if i % 10 == 0:
-        #    print("iteration %d: loss %f" % (i, loss))
+        if i % 10 == 0:
+            print("iteration %d: loss %f" % (i, loss))
 
-        # backward pass
-
+        # Backward pass
+        dCdW1, dCdW2, dCdb1, dCdb2 = backward(a2, a1, X_batch, y_batch, W2, m1)
         # print("dCdb2.shape:", dCdb2.shape, dCdb1.shape)
 
         # depending on the derivatives of W1, and W2 regaring the cost/loss
@@ -175,7 +219,12 @@ def train(X_train, y_train):
         # we weight the gradient by a learning rate
         # YOUR CODE HERE
 
-    # return W1, W2, b1, b2
+        W1 -= learning_rate * dCdW1
+        b1 -= learning_rate * dCdb1
+        W2 -= learning_rate * dCdW2
+        b2 -= learning_rate * dCdb2
+
+    return W1, W2, b1, b2
 
 
 X_train, y_train = setup_train()
@@ -191,18 +240,31 @@ test_images.append((cv2.imread('./images/db/test/car.jpg',
 test_images.append((cv2.imread('./images/db/test/face.jpg',
                                cv2.IMREAD_GRAYSCALE), 2))
 
+
 for ti in test_images:
     resized_ti = cv2.resize(ti[0], (nn_img_size, nn_img_size),
                             interpolation=cv2.INTER_AREA)
     x_test = resized_ti.reshape(1, -1)
     # YOUR CODE HERE
     # convert test images to pytorch
-    # do forward pass depending mse or softmax
-    # print(f"Test output - values: {a2_test} \t pred_id: {np.argmax(a2_test)} \t true_id: {ti[1]}")
 
-# print("------------------------------------")
-# print("Test model output Weights:", W1, W2)
-# print("Test model output bias:", b1, b2)
+    # Forward pass
+    z1 = x_test @ W1 + b1
+    a1 = relu(z1)
+    z2 = a1 @ W2 + b2
+
+    if loss_mode == 'crossentropy':
+        a2_test = softmax(z2)
+    elif loss_mode == 'mse':
+        a2_test = z2
+    else:
+        raise ValueError("Unknown loss mode")
+    # do forward pass depending mse or softmax
+    print(f"Test output - values: {a2_test} \t pred_id: {np.argmax(a2_test)} \t true_id: {ti[1]}")
+
+print("------------------------------------")
+print("Test model output Weights:", W1, W2)
+print("Test model output bias:", b1, b2)
 
 plt.title("Training Loss vs. Number of Training Epochs")
 plt.xlabel("Training Epochs")
