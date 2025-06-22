@@ -30,11 +30,49 @@ CATEGORIES = {
 class MyNeuralNetwork(nn.Module):
     def __init__(self):
         super(MyNeuralNetwork, self).__init__()
-        # TODO: YOUR CODE HERE
+
+        kernel = 3
+        stride = 1
+
+        # First Conv Block (input size: 28x28)
+        pad1 = self.calc_same_padding(kernel=kernel, stride=stride, input_size=28, output_size=28)
+        self.conv1_1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=kernel, padding=pad1)
+        self.conv1_2 = nn.Conv2d(32, 32, kernel_size=kernel, padding=pad1)
+        self.pool1 = nn.MaxPool2d(2, 2)  # → 14x14
+        self.dropout1 = nn.Dropout(0.25)
+
+        # Second Conv Block (input size: 14x14)
+        pad2 = self.calc_same_padding(kernel=kernel, stride=stride, input_size=14, output_size=14)
+        self.conv2_1 = nn.Conv2d(32, 64, kernel_size=kernel, padding=pad2)
+        self.conv2_2 = nn.Conv2d(64, 64, kernel_size=kernel, padding=pad2)
+        self.pool2 = nn.MaxPool2d(2, 2)  # → 7x7
+        self.dropout2 = nn.Dropout(0.25)
+
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
+        self.fc2 = nn.Linear(512, 10)
 
     def forward(self, x):
-        # TODO: YOUR CODE HERE
+        x = F.relu(self.conv1_1(x))
+        x = F.relu(self.conv1_2(x))
+        x = self.pool1(x)
+        x = self.dropout1(x)
+
+        x = F.relu(self.conv2_1(x))
+        x = F.relu(self.conv2_2(x))
+        x = self.pool2(x)
+        x = self.dropout2(x)
+
+        x = x.view(-1, 64 * 7 * 7)  # Flatten
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)  # logits (no softmax here!)
+
         return x
+
+    @staticmethod
+    def calc_same_padding(kernel, stride, input_size, output_size):
+        pad_total = int((stride * (output_size - 1) - input_size + kernel))
+        pad = pad_total // 2
+        return pad
 
     def name(self):
         return "MyNeuralNetwork"
@@ -137,10 +175,10 @@ torch.manual_seed(0)
 
 # hyperparameter
 # TODO: find good hyperparameters
-# batch_size = ...
-# num_epochs = ...
-# learning_rate = ...
-# momentum = ...
+batch_size = 64
+num_epochs = 10
+learning_rate = 0.001
+momentum = 0.8
 
 transform = transforms.Compose([
     # you can add other transformations in this list
