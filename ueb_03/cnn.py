@@ -31,20 +31,20 @@ class MyNeuralNetwork(nn.Module):
     def __init__(self):
         super(MyNeuralNetwork, self).__init__()
 
-        kernel = 3
-        stride = 1
+        self.kernel = 3
+        self.stride = 1
 
         # First Conv Block (input size: 28x28)
-        pad1 = self.calc_same_padding(kernel=kernel, stride=stride, input_size=28, output_size=28)
-        self.conv1_1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=kernel, padding=pad1)
-        self.conv1_2 = nn.Conv2d(32, 32, kernel_size=kernel, padding=pad1)
+        self.pad1 = self.calc_same_padding(kernel=self.kernel, stride=self.stride, input_size=28, output_size=28)
+        self.conv1_1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=self.kernel, padding=self.pad1)
+        self.conv1_2 = nn.Conv2d(32, 32, kernel_size=self.kernel, padding=self.pad1)
         self.pool1 = nn.MaxPool2d(2, 2)  # → 14x14
         self.dropout1 = nn.Dropout(0.25)
 
         # Second Conv Block (input size: 14x14)
-        pad2 = self.calc_same_padding(kernel=kernel, stride=stride, input_size=14, output_size=14)
-        self.conv2_1 = nn.Conv2d(32, 64, kernel_size=kernel, padding=pad2)
-        self.conv2_2 = nn.Conv2d(64, 64, kernel_size=kernel, padding=pad2)
+        self.pad2 = self.calc_same_padding(kernel=self.kernel, stride=self.stride, input_size=14, output_size=14)
+        self.conv2_1 = nn.Conv2d(32, 64, kernel_size=self.kernel, padding=self.pad2)
+        self.conv2_2 = nn.Conv2d(64, 64, kernel_size=self.kernel, padding=self.pad2)
         self.pool2 = nn.MaxPool2d(2, 2)  # → 7x7
         self.dropout2 = nn.Dropout(0.25)
 
@@ -77,6 +77,85 @@ class MyNeuralNetwork(nn.Module):
     def name(self):
         return "MyNeuralNetwork"
 
+class AlexNet(MyNeuralNetwork):
+    """
+    Inspired by AlexNet, but channel number, padding and stride adapted from the MyNeuralNetwork example
+    """
+    def __init__(self):
+        super(AlexNet, self).__init__()
+        self.kernel1 = 11
+        self.kernel2 = 5
+        self.kernel3 = 3
+        self.pad3 = self.calc_same_padding(self.kernel3, self.stride, 6, 6)
+
+        self.conv1_1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=11, padding=self.pad1)
+        self.pool1 = nn.MaxPool2d(self.kernel1, self.stride)
+        self.conv1_2 = nn.Conv2d(32, 64, kernel_size=self.kernel2, padding=self.pad2)
+        self.conv1_3 = nn.Conv2d(64, 128, kernel_size=self.kernel3, padding=self.pad3)
+        self.fc1 = nn.Linear(128 * 2 * 2, 512)
+        self.fc2 = nn.Linear(512, 10)
+
+    def forward(self, x):
+        x = F.relu(self.conv1_1(x))
+        x = self.pool1(x)
+        x = F.relu(self.conv1_2(x))
+        x = self.pool1(x)
+        x = F.relu(self.conv1_3(x))
+        x = self.pool1(x)
+        x = x.view(x.size(0), -1)  # Flatten
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+    def name(self):
+        return "MyAlexNet"
+
+
+class VGG16(MyNeuralNetwork):
+    def __init__(self):
+        super(VGG16, self).__init__()
+
+        self.kernel = 3
+        self.pad = 1
+        self.stride = 1
+
+        # Block 1: 2 conv layers
+        self.block1 = nn.ModuleList([
+            nn.Conv2d(1, 64, kernel_size=self.kernel, padding=self.pad),
+            nn.Conv2d(64, 64, kernel_size=self.kernel, padding=self.pad)
+        ])
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # Block 2: 3 conv layers
+        self.block2 = nn.ModuleList([
+            nn.Conv2d(64, 128, kernel_size=self.kernel, padding=self.pad),
+            nn.Conv2d(128, 128, kernel_size=self.kernel, padding=self.pad),
+            nn.Conv2d(128, 128, kernel_size=self.kernel, padding=self.pad)
+        ])
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # FC layers
+        self.fc1 = nn.Linear(128 * 7 * 7, 512)
+        self.fc2 = nn.Linear(512, 10)
+
+    def forward(self, x):
+        # Block 1 (2x conv + 1 pool)
+        for conv in self.block1:
+            x = F.relu(conv(x))
+        x = self.pool1(x)
+
+        # Block 2 (3x conv + 1 pool)
+        for conv in self.block2:
+            x = F.relu(conv(x))
+        x = self.pool2(x)
+
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+    def name(self):
+        return "MyVGG16"
 
 def training(model, data_loader, optimizer, criterion, device):
     model.train()
@@ -205,65 +284,73 @@ train_loader = DataLoader(dataset=train_set, shuffle=True, **loader_params)
 test_loader = DataLoader(dataset=test_set, shuffle=False, **loader_params)
 
 ## model setup
-model = MyNeuralNetwork().to(device)
-optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
-criterion = nn.CrossEntropyLoss()
 
-train_acc_history = []
-test_acc_history = []
+def train_model(model: MyNeuralNetwork):
+    model = model.to(device)
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
+    criterion = nn.CrossEntropyLoss()
 
-train_loss_history = []
-test_loss_history = []
+    train_acc_history = []
+    test_acc_history = []
 
-best_acc = 0.0
-since = time.time()
+    train_loss_history = []
+    test_loss_history = []
 
-for epoch in range(num_epochs):
+    best_acc = 0.0
+    since = time.time()
 
-    print('Epoch {}/{}'.format(epoch, num_epochs - 1))
-    print('-' * 10)
+    for epoch in range(num_epochs):
 
-    # train
-    training_loss, training_acc = training(model, train_loader, optimizer,
-                                           criterion, device)
-    train_loss_history.append(training_loss)
-    train_acc_history.append(training_acc)
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
 
-    # test
-    test_loss, test_acc = test(model, test_loader, criterion, device)
-    test_loss_history.append(test_loss)
-    test_acc_history.append(test_acc)
+        # train
+        training_loss, training_acc = training(model, train_loader, optimizer,
+                                               criterion, device)
+        train_loss_history.append(training_loss)
+        train_acc_history.append(training_acc)
 
-    # overall best model
-    if test_acc > best_acc:
-        best_acc = test_acc
-        #  best_model_wts = copy.deepcopy(model.state_dict())
+        # test
+        test_loss, test_acc = test(model, test_loader, criterion, device)
+        test_loss_history.append(test_loss)
+        test_acc_history.append(test_acc)
 
-time_elapsed = time.time() - since
-print(
-    f'Training complete in {(time_elapsed // 60):.0f}m {(time_elapsed % 60):.0f}s'
-)
-print(f'Best val Acc: {best_acc:4f}')
+        # overall best model
+        if test_acc > best_acc:
+            best_acc = test_acc
+            #  best_model_wts = copy.deepcopy(model.state_dict())
 
-# plot loss and accuracy curves
-train_acc_history = [h.cpu().numpy() for h in train_acc_history]
-test_acc_history = [h.cpu().numpy() for h in test_acc_history]
+    time_elapsed = time.time() - since
+    print(
+        f'Training complete in {(time_elapsed // 60):.0f}m {(time_elapsed % 60):.0f}s'
+    )
+    print(f'Best val Acc: {best_acc:4f}')
 
-plot(train_acc_history, test_acc_history, 'accuracy', num_epochs)
-plot(train_loss_history, test_loss_history, 'loss', num_epochs)
+    # plot loss and accuracy curves
+    train_acc_history = [h.cpu().numpy() for h in train_acc_history]
+    test_acc_history = [h.cpu().numpy() for h in test_acc_history]
 
-# plot examples
-example_data, _ = next(iter(test_loader))
-with torch.no_grad():
-    output = model(example_data)
+    plot(train_acc_history, test_acc_history, 'accuracy', num_epochs)
+    plot(train_loss_history, test_loss_history, 'loss', num_epochs)
 
-    for i in range(6):
-        plt.subplot(2, 3, i + 1)
-        plt.tight_layout()
-        plt.imshow(example_data[i][0], cmap='gray', interpolation='none')
-        plt.title("Pred: {}".format(CATEGORIES[output.data.max(
-            1, keepdim=True)[1][i].item()]))
-        plt.xticks([])
-        plt.yticks([])
-    plt.savefig("examples.png")
-    plt.show()
+    # plot examples
+    example_data, _ = next(iter(test_loader))
+    with torch.no_grad():
+        output = model(example_data)
+
+        for i in range(6):
+            plt.subplot(2, 3, i + 1)
+            plt.tight_layout()
+            plt.imshow(example_data[i][0], cmap='gray', interpolation='none')
+            plt.title("Pred: {}".format(CATEGORIES[output.data.max(
+                1, keepdim=True)[1][i].item()]))
+            plt.xticks([])
+            plt.yticks([])
+        plt.savefig("examples.png")
+        plt.show()
+
+model_1 = MyNeuralNetwork()
+model_2 = AlexNet()
+model_3 = VGG16()
+train_model(model_3)
+
