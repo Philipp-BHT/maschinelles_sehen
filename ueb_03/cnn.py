@@ -62,9 +62,9 @@ class MyNeuralNetwork(nn.Module):
         x = self.pool2(x)
         x = self.dropout2(x)
 
-        x = x.view(-1, 64 * 7 * 7)  # Flatten
+        x = x.view(-1, 64 * 7 * 7)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)  # logits (no softmax here!)
+        x = self.fc2(x)
 
         return x
 
@@ -233,7 +233,7 @@ def test(model, data_loader, criterion, device):
     return epoch_loss, epoch_acc
 
 
-def plot(train_history, test_history, metric, num_epochs):
+def plot(train_history, test_history, metric, num_epochs, model):
 
     plt.title(f"Validation/Test {metric} vs. Number of Training Epochs")
     plt.xlabel(f"Training Epochs")
@@ -243,7 +243,7 @@ def plot(train_history, test_history, metric, num_epochs):
     plt.ylim((0, 1.))
     plt.xticks(np.arange(1, num_epochs + 1, 1.0))
     plt.legend()
-    plt.savefig(f"{metric}.png")
+    plt.savefig(f"{metric}_{model.name}.png")
     plt.show()
 
 
@@ -287,6 +287,7 @@ test_loader = DataLoader(dataset=test_set, shuffle=False, **loader_params)
 
 def train_model(model: MyNeuralNetwork):
     model = model.to(device)
+    print(f"Training Model {model.name()}")
     optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
     criterion = nn.CrossEntropyLoss()
 
@@ -330,8 +331,8 @@ def train_model(model: MyNeuralNetwork):
     train_acc_history = [h.cpu().numpy() for h in train_acc_history]
     test_acc_history = [h.cpu().numpy() for h in test_acc_history]
 
-    plot(train_acc_history, test_acc_history, 'accuracy', num_epochs)
-    plot(train_loss_history, test_loss_history, 'loss', num_epochs)
+    plot(train_acc_history, test_acc_history, 'accuracy', num_epochs, model)
+    plot(train_loss_history, test_loss_history, 'loss', num_epochs, model)
 
     # plot examples
     example_data, _ = next(iter(test_loader))
@@ -346,7 +347,7 @@ def train_model(model: MyNeuralNetwork):
                 1, keepdim=True)[1][i].item()]))
             plt.xticks([])
             plt.yticks([])
-        plt.savefig("examples.png")
+        plt.savefig(f"examples_{model.name}.png")
         plt.show()
 
 model_1 = MyNeuralNetwork()
