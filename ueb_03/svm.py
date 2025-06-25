@@ -54,7 +54,7 @@ for img_path in images:
 # You also need a y_train vector containing the labels encoded as integers
 
 X_train = np.array(descriptors)
-labels = [path.split('\\')[-2] for path in image_paths]
+labels = [path.split('/')[-2] for path in image_paths]
 
 label_encoder = LabelEncoder()
 y_train = label_encoder.fit_transform(labels)
