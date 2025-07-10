@@ -83,16 +83,16 @@ class AlexNet(MyNeuralNetwork):
     """
     def __init__(self):
         super(AlexNet, self).__init__()
-        self.kernel1 = 11
+        self.kernel1 = 3
         self.kernel2 = 5
         self.kernel3 = 3
         self.pad3 = self.calc_same_padding(self.kernel3, self.stride, 6, 6)
 
         self.conv1_1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=11, padding=self.pad1)
         self.pool1 = nn.MaxPool2d(self.kernel1, self.stride)
-        self.conv1_2 = nn.Conv2d(32, 64, kernel_size=self.kernel2, padding=self.pad2)
-        self.conv1_3 = nn.Conv2d(64, 128, kernel_size=self.kernel3, padding=self.pad3)
-        self.fc1 = nn.Linear(128 * 2 * 2, 512)
+        self.conv1_2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=self.kernel2, padding=self.pad2)
+        self.conv1_3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=self.kernel3, padding=self.pad3)
+        self.fc1 = nn.Linear(18432, 512)
         self.fc2 = nn.Linear(512, 10)
 
     def forward(self, x):
@@ -102,7 +102,7 @@ class AlexNet(MyNeuralNetwork):
         x = self.pool1(x)
         x = F.relu(self.conv1_3(x))
         x = self.pool1(x)
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
@@ -243,7 +243,7 @@ def plot(train_history, test_history, metric, num_epochs, model):
     plt.ylim((0, 1.))
     plt.xticks(np.arange(1, num_epochs + 1, 1.0))
     plt.legend()
-    plt.savefig(f"{metric}_{model.name}.png")
+    plt.savefig(f"{metric}_{model.name()}.png")
     plt.show()
 
 
@@ -347,11 +347,13 @@ def train_model(model: MyNeuralNetwork):
                 1, keepdim=True)[1][i].item()]))
             plt.xticks([])
             plt.yticks([])
-        plt.savefig(f"examples_{model.name}.png")
+        plt.savefig(f"examples_{model.name()}.png")
         plt.show()
 
 model_1 = MyNeuralNetwork()
 model_2 = AlexNet()
 model_3 = VGG16()
+# train_model(model_1)
+train_model(model_2)
 train_model(model_3)
 
