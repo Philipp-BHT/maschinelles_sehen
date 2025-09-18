@@ -44,6 +44,7 @@ if __name__ == '__main__':
     images = load_images('./data/train/')
     y, x = images.shape[1:3]
     print(f'Loaded image matrix of shape {images.shape}')
+    print("x-shape, y-shape", x, y)
 
     # Flatten last two dimensions by reshaping the array
     images = images.reshape(images.shape[0], x * y)
@@ -51,13 +52,15 @@ if __name__ == '__main__':
 
     # 1.1 Calculate mean values for each pixel across all images
     # 1.2 Subtract mean values from images to center the data
-    # TODO YOUR CODE HERE
+    mean = np.mean(images, axis=0)
+    images = images - mean
 
     # Calculate PCA
     # 2. Compute Eigenvectors of the image data
     #   and find the best linear mapping (eigenbasis)
     #   use the np.linalg.svd with the parameter 'full_matrices=False'
     #   pcs contains the singular vectors ~ eigen vectors
+    # svals = Eingenwerte (singular values)
     U, svals, pcs = np.linalg.svd(images, full_matrices=False)
     print(
         f"U shape: {U.shape}, PCS shape: {pcs.shape}, SVALS shape: {svals.shape}, ",
@@ -69,13 +72,11 @@ if __name__ == '__main__':
 
     # 3. Use k=10/75/150 first (most important) Eigenvectors for image reconstruction
     # That means we only need the first k rows in the Vt matrix
-    # TODO YOUR CODE HERE
 
     # 4. Load, flatten and center the test images (as in 1.1 and 1.2)
     images_test = load_images('./data/test/')
     y, x = images_test.shape[1:3]
-    # TODO YOUR CODE HERE - hint: see auto-encode.py
-    # images_test_normalized = ...
+    images_test_normalized = images_test.reshape(images_test.shape[0], x * y) - mean
 
     # List for reconstructed images to plot it later
     reconstructed_images = []
@@ -85,24 +86,25 @@ if __name__ == '__main__':
     # and measure the reconstruction error between reconstructed and original image
     errors = []
     # TODO UNCOMMENT
-    # for i, test_image_normalized in enumerate(images_test_normalized):
-    #   print(f'----- image[{i}] -----')
-    # TODO YOUR CODE HERE
-    # 5.1 Project in basis by using the dot product of the Eigenbasis and the flattened image vector
-    # the result is a set of coefficients that are sufficient to reconstruct the image afterwards
-    #   coeff_test_image = ...
-    #   print(f'Encoded / compact shape: {coeff_test_image.shape}')
-    # TODO YOUR CODE HERE
-    # 5.2 Reconstruct image from coefficient vector and add mean
-    #   print(f'Reconstructed shape: {reconstructed_image.shape}')
-    #   reconstructed_image = ...
-    #   reconstructed_image = reconstructed_image.reshape(images_test[0].shape)
-    #   reconstructed_images.append(reconstructed_image)
-    # TODO UNCOMMENT
-    # Measure error between loaded original image and reconstructed image
-    # error = np.linalg.norm(test_image_original - reconstructed_image)
-    # errors.append(error)
-    # print("reconstruction error: ", error)
+    for i, test_image_normalized in enumerate(images_test_normalized):
+        print(f'----- image[{i}] -----')
+        # 5.1 Project in basis by using the dot product of the Eigenbasis and the flattened image vector
+        # the result is a set of coefficients that are sufficient to reconstruct the image afterwards
+        pcs_k = pcs[:k, :]  # shape (k, D)
+        coeff_test_image = pcs_k @ test_image_normalized
+        print(f'Encoded / compact shape: {coeff_test_image.shape}')
+
+        # 5.2 Reconstruct image from coefficient vector and add mean
+        reconstructed_image = pcs_k.T @ coeff_test_image + mean
+        print(f'Reconstructed shape: {reconstructed_image.shape}')
+        reconstructed_image = reconstructed_image.reshape(images_test[0].shape)
+        reconstructed_images.append(reconstructed_image)
+        # TODO UNCOMMENT
+        # Measure error between loaded original image and reconstructed image
+        test_image_original = images_test[i]
+        error = np.linalg.norm(test_image_original - reconstructed_image)
+        errors.append(error)
+    print("reconstruction error: ", error)
 
     # Plot Results
     if len(images_test) != 0 and len(reconstructed_images) != 0:

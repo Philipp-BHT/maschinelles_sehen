@@ -43,21 +43,32 @@ def load_images(path: str, file_ending: str = ".png") -> np.ndarray:
 class Autoencoder(nn.Module):
     # n_pixels: The number of pixels in the image
     # feature_length: Vector length of the encoded image
-    def __init__(self, n_pixels, feature_length):
+    def __init__(self, n_pixels, feature_length, func: str = "relu"):
         super(Autoencoder, self).__init__()
         # 1.1 Define Encoder layer
         # 1.2 Define decoder layer
-        # TODO YOUR CODE HERE
+        self.func = func.lower()
+        self.encoder = nn.Linear(n_pixels, feature_length)
+        self.decoder = nn.Linear(feature_length, n_pixels)
 
     def forward(self, x):
-        # 1.3 Define forward path
-        # TODO YOUR CODE HERE
-        return x
+        if self.func == "relu":
+            act = torch.relu
+        elif self.func == "sigmoid":
+            act = torch.sigmoid
+        elif self.func == "tanh":
+            act = torch.tanh
+        else:
+            act = lambda x: x
+
+        encoded = act(self.encoder(x))
+        decoded = act(self.decoder(encoded))
+        return decoded
 
 
 if __name__ == '__main__':
 
-    images, x, y = load_images('./data/train/')
+    # images, x, y = zip(*load_images('./data/train/'))
 
     # Load images
     images = load_images('./data/train/')
@@ -78,7 +89,8 @@ if __name__ == '__main__':
     data = torch.from_numpy(images)
 
     # Load Autoencoder model with number of pixels in our images
-    model = Autoencoder(n_pixels=x * y, feature_length=300)
+    model = Autoencoder(n_pixels=x * y, feature_length=300, func="tanh")
+
     # Define Loss
     criterion = nn.MSELoss()
     # Define Optimizer
@@ -135,7 +147,7 @@ if __name__ == '__main__':
         pred_np += mean
         img_reconst = pred_np.reshape((y, x))
         reconstructed_images.append(img_reconst)
-        print(f'Reconstructed mage shape: {img_reconst.shape}')
+        print(f'Reconstructed image shape: {img_reconst.shape}')
         # Measure error between loaded original image and reconstructed image
         error = np.linalg.norm(test_image - img_reconst)
         errors.append(error)

@@ -1,0 +1,117 @@
+PCA:
+----- image[0] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[1] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[2] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[3] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[4] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[5] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[6] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[7] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[8] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[9] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[10] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[11] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[12] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[13] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+----- image[14] -----
+Encoded / compact shape: (150,)
+Reconstructed shape: (11368,)
+reconstruction error:  9.690578381126194
+Mean error 9.362520042964489
+
+Mittlerer Rekonstruktionsfehler: 9.69
+
+
+Auto Encode:
+----- image[0] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 4.64836298767149
+----- image[1] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 17.102425958789567
+----- image[2] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 13.245444406092544
+----- image[3] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 13.488468485324319
+----- image[4] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 16.86869252806219
+----- image[5] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 14.898792855062716
+----- image[6] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 12.53865804852957
+----- image[7] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 9.95512001518942
+----- image[8] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 7.114477112141251
+----- image[9] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 13.078305732073991
+----- image[10] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 12.802515929172259
+----- image[11] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 11.386031939644347
+----- image[12] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 13.530930871278095
+----- image[13] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 11.63199801343029
+----- image[14] -----
+Prediction shape: (11368,)
+Reconstructed image shape: (116, 98)
+Reconstruction error: 12.768998153446503
+Mean error 12.337281535727236
+
+
+Mittlerer Rekonstruktionsfehler: 12.34
