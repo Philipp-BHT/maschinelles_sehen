@@ -1,16 +1,16 @@
 import cv2 as cv
 import numpy as np
-import glob, os
+import glob, os, time
 
 class Camera:
     def __init__(self, calib_path="calib_fisheye_charuco.npz",
-                 images_glob="calib_imgs/*.jpg",
-                 squaresX=7, squaresY=5,
-                 squareLength=0.030, markerLength=0.022,
-                 dict_name=cv.aruco.DICT_5X5_1000,
-                 balance=0.0):
+                 squaresX=11, squaresY=8,
+                 squareLength=0.020, markerLength=0.0145,
+                 dict_name=cv.aruco.DICT_4X4_1000,
+                 balance=0.2, init=False):
         self.calib_path = calib_path
-        self.images_glob = images_glob
+        self.image_path = "calib_imgs"
+        self.images_glob = os.path.join(self.image_path, "*.jpg")
         self.squaresX, self.squaresY = squaresX, squaresY
         self.squareLength, self.markerLength = squareLength, markerLength
         self.dict_name = dict_name
@@ -25,7 +25,8 @@ class Camera:
         self.map2 = None
         self.maps_size = None  # (w,h) target size for current maps
 
-        self.load_parameters()
+        if not init:
+            self.load_parameters()
 
     def load_parameters(self):
         if os.path.exists(self.calib_path):
@@ -39,10 +40,21 @@ class Camera:
     def calibrate_camera_fisheye(self):
         aruco = cv.aruco
         dict_id = aruco.getPredefinedDictionary(self.dict_name)
+        start_id = 2  # <-- your print starts at 2
+
+        # First, create a temp board to learn how many markers it has
+        tmp_board = aruco.CharucoBoard((self.squaresX, self.squaresY), self.squareLength, self.markerLength, dict_id)
+        num_markers = len(tmp_board.getIds()) if hasattr(tmp_board, "getIds") else len(tmp_board.ids)
+
+        # Build the final board with an ID offset
+        new_ids = (start_id + np.arange(num_markers)).astype(np.int32).reshape(-1, 1)
         board = aruco.CharucoBoard(
             (self.squaresX, self.squaresY),
-            self.squareLength, self.markerLength, dict_id
+            self.squareLength, self.markerLength,
+            dict_id,
+            ids=new_ids  # <-- key bit: pass ids at construction
         )
+
 
         objpoints, imgpoints = [], []
         img_size = None
@@ -68,8 +80,8 @@ class Camera:
                 continue
 
             # Build per-image 3D/2D lists (fisheye prefers (N,1,3) and (N,1,2))
-            obj = board.chessboardCorners[np.int32(ch_ids).ravel()]  # (N,3)
-            obj = obj.reshape(-1,1,3).astype(np.float32)
+            corners3d = board.getChessboardCorners()  # shape (N, 3)
+            obj = corners3d[np.int32(ch_ids).ravel()].astype(np.float32).reshape(-1, 1, 3)
             img_pts = ch_corners.reshape(-1,1,2).astype(np.float32)
 
             objpoints.append(obj)
@@ -106,22 +118,90 @@ class Camera:
         self._build_rectification_maps(self.img_size)
 
     def _build_rectification_maps(self, frame_size):
-        """Create/refresh rectification maps for the given frame size (w,h)."""
-        self.newK = cv.fisheye.estimateNewCameraMatrixForUndistortRectify(
-            self.K, self.D, frame_size, self.R, balance=self.balance, fov_scale=1.0
+        assert self.K is not None and self.D is not None, "Intrinsics not loaded"
+        w, h = frame_size  # (w,h)
+
+        # 1) Try to compute newK with a reasonable balance
+        bal = float(getattr(self, "balance", 0.5))
+        bal = max(0.0, min(1.0, bal))
+        R = np.eye(3, dtype=np.float64)
+        newK = cv.fisheye.estimateNewCameraMatrixForUndistortRectify(
+            self.K, self.D, (w, h), R, balance=bal, fov_scale=1.0
         )
-        self.map1, self.map2 = cv.fisheye.initUndistortRectifyMap(
-            self.K, self.D, self.R, self.newK, frame_size, m1type=cv.CV_16SC2
+
+        # 2) If newK looks crazy, FALL BACK to using K directly
+        def _looks_bad(Km):
+            ok = np.isfinite(Km).all()
+            fx, fy, cx, cy = Km[0, 0], Km[1, 1], Km[0, 2], Km[1, 2]
+            return (not ok) or fx < 10 or fy < 10 or cx < 0 or cy < 0 or cx > 2 * w or cy > 2 * h
+
+        if _looks_bad(newK):
+            # fallback path
+            newK = self.K.copy()
+            R = np.eye(3, dtype=np.float64)
+
+        # 3) Build float maps (two maps: x and y)
+        map1, map2 = cv.fisheye.initUndistortRectifyMap(
+            self.K, self.D, R, newK, (w, h), m1type=cv.CV_32F
         )
-        self.maps_size = frame_size
+
+        # 4) Quick validity check; if still terrible, retry with a different balance or final fallback
+        mx, my = map1, map2
+        valid = np.mean((mx >= 0) & (mx < w) & (my >= 0) & (my < h))
+
+        if valid < 0.05:
+            # Try again with a very conservative balance
+            newK_try = cv.fisheye.estimateNewCameraMatrixForUndistortRectify(
+                self.K, self.D, (w, h), np.eye(3), balance=0.0, fov_scale=1.0
+            )
+            if _looks_bad(newK_try):
+                newK_try = self.K.copy()
+            map1, map2 = cv.fisheye.initUndistortRectifyMap(
+                self.K, self.D, np.eye(3), newK_try, (w, h), m1type=cv.CV_32F
+            )
+            mx, my = map1, map2
+            valid = np.mean((mx >= 0) & (mx < w) & (my >= 0) & (my < h))
+
+            # If still bad, force the simplest possible maps (identity-ish using K)
+            if valid < 0.05:
+                newK_try = self.K.copy()
+                map1, map2 = cv.fisheye.initUndistortRectifyMap(
+                    self.K, self.D, np.eye(3), newK_try, (w, h), m1type=cv.CV_32F
+                )
+
+        # 5) Store
+        self.R = R
+        self.newK = newK
+        self.map1, self.map2 = map1, map2
+        self.maps_size = (w, h)
 
     def undistort_image(self, image):
+        if image is None:
+            raise ValueError("undistort_image got image=None (bad path or read failure)")
+
         h, w = image.shape[:2]
         size = (w, h)
         if self.map1 is None or self.maps_size != size:
             self._build_rectification_maps(size)
-        # Remap
-        return cv.remap(image, self.map1, self.map2, interpolation=cv.INTER_LINEAR)
+
+        rect = cv.remap(image, self.map1, self.map2, interpolation=cv.INTER_LINEAR, borderMode=cv.BORDER_CONSTANT)
+        mx = self.map1[..., 0]
+        my = self.map1[..., 1]
+        valid = np.mean((mx >= 0) & (mx < w) & (my >= 0) & (my < h))
+        print(f"valid mapped pixels: {valid*100:.1f}%")
+        return rect
+
+    def show_image(self, image):
+        undistorted = self.undistort_image(cv.imread(image))
+        win = "Undistorted Image"
+        cv.namedWindow(win, cv.WINDOW_NORMAL)
+        while True:
+            cv.imshow(win, undistorted)
+
+            key = cv.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+        cv.destroyAllWindows()
 
     # optional: undistort 2D points only (avoid remapping the whole image)
     def undistort_points(self, pts):
@@ -135,3 +215,198 @@ class Camera:
         # Convert to normalized with fisheye model, then back to pixels with newK
         norm = cv.fisheye.undistortPoints(pts, self.K, self.D, R=self.R, P=self.newK)
         return norm.reshape(-1,2)
+
+    def record_charuco_images(self,
+            num_target=50,
+            min_delay_s=0.4,
+            min_corners=20,
+            cam_index=2,
+            width=1280, height=720,
+    ):
+        os.makedirs(self.image_path, exist_ok=True)
+
+        aruco = cv.aruco
+        dict_id = aruco.getPredefinedDictionary(self.dict_name)
+        board = aruco.CharucoBoard((self.squaresX, self.squaresY), self.squareLength, self.markerLength, dict_id)
+        params = aruco.DetectorParameters()
+
+        cap = cv.VideoCapture(cam_index)  # CAP_DSHOW on Windows; drop on Linux/mac
+        if not cap.isOpened():
+            print("ERROR: Cannot open camera.")
+            return
+
+        # Try to set resolution (may be ignored by some endoscopes)
+        cap.set(cv.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv.CAP_PROP_FRAME_HEIGHT, height)
+
+        # Optional: try to lock auto-exposure (varies by device/OS; may do nothing)
+        try:
+            cap.set(cv.CAP_PROP_AUTO_EXPOSURE, 0.25)  # 0.25 = manual for many UVC cams
+            # cap.set(cv.CAP_PROP_EXPOSURE, -6)      # device-specific
+            cap.set(cv.CAP_PROP_AUTOFOCUS, 0)
+        except Exception:
+            pass
+
+        saved = 0
+        last_save_t = 0.0
+        last_pose = None  # (rvec, tvec) for diversity check
+        win = "Calib capture (q=quit, s=save)"
+        cv.namedWindow(win, cv.WINDOW_NORMAL)
+
+        while saved < num_target:
+            ok, frame = cap.read()
+            if not ok:
+                continue
+
+            gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+            corners, ids, _ = aruco.detectMarkers(gray, dict_id, parameters=params)
+
+            overlay = frame.copy()
+            status = f"{saved}/{num_target} saved | corners: 0"
+
+            if ids is not None and len(ids) > 0:
+                aruco.refineDetectedMarkers(gray, board, corners, ids, rejectedCorners=[])
+                cv.aruco.drawDetectedMarkers(overlay, corners, ids)
+
+                ok_interp, ch_corners, ch_ids = aruco.interpolateCornersCharuco(
+                    markerCorners=corners, markerIds=ids, image=gray, board=board
+                )
+
+                nchar = 0 if (not ok_interp or ch_corners is None) else len(ch_corners)
+                status = f"{saved}/{num_target} saved | corners: {nchar}"
+
+                # Estimate provisional pose for diversity (pinhole model is okay just for relative pose)
+                if ok_interp and nchar >= min_corners:
+                    # Build obj/img points (no need for real scale for diversity check)
+                    corners3d = board.getChessboardCorners()  # shape (N, 3)
+                    obj = corners3d[np.int32(ch_ids).ravel()].astype(np.float32).reshape(-1, 1, 3)
+                    imgp = ch_corners.reshape(-1, 1, 2).astype(np.float32)
+
+                    # Dummy intrinsics from image center/focal guess for relative angle checks
+                    fx = fy = 0.8 * width
+                    cx, cy = width / 2, height / 2
+                    K_guess = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
+
+                    ok_pnp, rvec, tvec = cv.solvePnP(obj, imgp, K_guess, None, flags=cv.SOLVEPNP_ITERATIVE)
+                    keep = ok_pnp
+
+                    # Diversity rule: ensure angle or distance changed enough
+                    if ok_pnp and last_pose is not None:
+                        r_last, t_last = last_pose
+                        R1, _ = cv.Rodrigues(r_last);
+                        R2, _ = cv.Rodrigues(rvec)
+                        dR = R2 @ R1.T
+                        angle = np.degrees(np.arccos(np.clip((np.trace(dR) - 1) / 2, -1, 1)))
+                        dt = np.linalg.norm(tvec - t_last)
+                        # thresholds (tune): >= 10° or translation change
+                        if angle < 10.0 and dt < 0.15:
+                            keep = False
+                            status += " | duplicate pose"
+                    else:
+                        keep = ok_pnp
+
+                    # Rate limiting
+                    if keep and (time.time() - last_save_t) < min_delay_s:
+                        keep = False
+
+                    # Save if good
+                    if keep:
+                        fname = os.path.join(self.image_path, f"calib_{saved:03d}.jpg")
+                        cv.imwrite(fname, frame)
+                        saved += 1
+                        last_save_t = time.time()
+                        last_pose = (rvec, tvec)
+                        status += " | SAVED"
+
+            # HUD
+            cv.putText(overlay, status, (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv.LINE_AA)
+            cv.imshow(win, overlay)
+
+            key = cv.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('s'):
+                # manual save regardless of corners (use sparingly)
+                fname = os.path.join(self.image_path, f"calib_{saved:03d}.jpg")
+                cv.imwrite(fname, frame)
+                saved += 1
+                last_save_t = time.time()
+                status += " | MANUAL SAVE"
+
+        cap.release()
+        cv.destroyAllWindows()
+        print(f"Done. Saved {saved} images to {self.image_path}")
+
+    def debug_undistort_once(self, img_bgr):
+        assert img_bgr is not None, "img is None"
+        h, w = img_bgr.shape[:2]
+        print("img size:", w, h)
+        print("K:\n", self.K)
+        print("D:", self.D.ravel())
+        print("img_size saved in calib:", getattr(self, "img_size", None))
+
+        # Build newK
+        bal = float(getattr(self, "balance", 0.5))
+        self.R = np.eye(3)
+        self.newK = cv.fisheye.estimateNewCameraMatrixForUndistortRectify(
+            self.K, self.D, (w, h), self.R, balance=bal, fov_scale=1.0
+        )
+        print("newK:\n", self.newK)
+        if not np.isfinite(self.newK).all():
+            raise RuntimeError("newK has NaNs/Infs")
+
+        # Build float maps
+        m1, m2 = cv.fisheye.initUndistortRectifyMap(
+            self.K, self.D, self.R, self.newK, (w, h), m1type=cv.CV_32F
+        )
+        # Valid fraction
+        mx, my = m1, m2
+        valid = np.mean((mx >= 0) & (mx < w) & (my >= 0) & (my < h))
+        print(f"valid mapped pixels: {valid * 100:.1f}%")
+        print("map ranges:",
+              f"mx[{mx.min():.1f},{mx.max():.1f}]",
+              f"my[{my.min():.1f},{my.max():.1f}]")
+
+        # Try remap
+        rect = cv.remap(img_bgr, m1, m2, interpolation=cv.INTER_LINEAR,
+                        borderMode=cv.BORDER_CONSTANT)
+        return rect
+
+    def capture_images(self, save_dir="test_images", cam_index=2):
+        os.makedirs(save_dir, exist_ok=True)
+        cap = cv.VideoCapture(cam_index)
+
+        if not cap.isOpened():
+            print(f"Cannot open camera index {cam_index}")
+            return
+
+        print("Press ENTER to save a frame, 'q' to quit.")
+
+        counter = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to grab frame")
+                break
+
+            cv.imshow("Camera", frame)
+            key = cv.waitKey(1) & 0xFF
+
+            if key == 13:  # Enter
+                filename = os.path.join(save_dir, f"test_{counter:03d}.jpg")
+                cv.imwrite(filename, frame)
+                print(f"Saved {filename}")
+                counter += 1
+            elif key == ord('q'):
+                break
+
+        cap.release()
+        cv.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    # Camera(init=True).record_charuco_images()
+    camera = Camera()
+    # camera.show_image("calib_imgs/calib_001.jpg")
+    camera.capture_images()
+    # camera.debug_undistort_once(cv.imread("calib_imgs/calib_001.jpg"))

@@ -22,8 +22,8 @@ def invert_T(T):
 
 class NeedleDetect:
     def __init__(self,
-                 dict_name=cv.aruco.DICT_5X5_1000,
-                 marker_length_m=0.040,     # <-- set this to your printed marker side (meters)
+                 dict_name=cv.aruco.DICT_4X4_1000,
+                 marker_length_m=0.018,     # <-- set this to your printed marker side (meters)
                  draw_axes_len=0.05,
                  needle_spec=None):
         self.camera = Camera()
@@ -36,7 +36,7 @@ class NeedleDetect:
         self.draw_axes_len = draw_axes_len
 
         self.aruco_dict = cv.aruco.getPredefinedDictionary(dict_name)
-        self.aruco_params = cv.aruco.DetectorParameters_create()
+        self.aruco_params = cv.aruco.DetectorParameters()
 
 
     def detect_aruco(self, frame_bgr, draw=True):
@@ -328,9 +328,9 @@ if __name__ == "__main__":
         "prefer_tip_brightest": True
     }
 
-    nd = NeedleDetect(marker_length_m=0.050, needle_spec=needle_spec)
+    nd = NeedleDetect(marker_length_m=0.018, needle_spec=needle_spec)
 
-    img = cv.imread("placeholder_image.png")
+    img = cv.imread("test_images/test_001.jpg")
     ar = nd.detect_aruco(img, draw=True)
     dn = nd.detect_needle(img, draw=True)
     cv.imshow("result", dn["image"])
