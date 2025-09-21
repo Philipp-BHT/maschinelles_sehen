@@ -1,29 +1,11 @@
-# needle_detect.py
-import cv2 as cv
-import numpy as np
 from camera import Camera
+from patchmask import *
 
-def rvec_tvec_to_T(rvec, tvec):
-    """Marker->Camera 4x4 transform."""
-    R, _ = cv.Rodrigues(rvec)
-    T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = R
-    T[:3, 3]  = tvec.reshape(3)
-    return T
-
-def invert_T(T):
-    """Invert a 4x4 rigid transform."""
-    R = T[:3, :3]
-    t = T[:3, 3]
-    Ti = np.eye(4, dtype=np.float64)
-    Ti[:3, :3] = R.T
-    Ti[:3, 3]  = -R.T @ t
-    return Ti
 
 class NeedleDetect:
     def __init__(self,
                  dict_name=cv.aruco.DICT_4X4_1000,
-                 marker_length_m=0.018,     # <-- set this to your printed marker side (meters)
+                 marker_length_m=0.018,
                  draw_axes_len=0.05,
                  needle_spec=None):
         self.camera = Camera()
@@ -38,6 +20,38 @@ class NeedleDetect:
         self.aruco_dict = cv.aruco.getPredefinedDictionary(dict_name)
         self.aruco_params = cv.aruco.DetectorParameters()
 
+    @staticmethod
+    def rvec_tvec_to_T(rvec, tvec):
+        """Marker->Camera 4x4 transform."""
+        R, _ = cv.Rodrigues(rvec)
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = R
+        T[:3, 3] = tvec.reshape(3)
+        return T
+
+    @staticmethod
+    def invert_T(T):
+        """Invert a 4x4 rigid transform."""
+        R = T[:3, :3]
+        t = T[:3, 3]
+        Ti = np.eye(4, dtype=np.float64)
+        Ti[:3, :3] = R.T
+        Ti[:3, 3] = -R.T @ t
+        return Ti
+
+    def aruco_reproj_rms(self, rvec, tvec, detected_corners_rect):
+        # 3D marker corners in marker/world coords (origin at center)
+        L = self.marker_length * 0.5
+        obj = np.array([[-L, L, 0],
+                        [L, L, 0],
+                        [L, -L, 0],
+                        [-L, -L, 0]], np.float32).reshape(-1, 1, 3)
+        proj, _ = cv.projectPoints(obj, rvec, tvec, self.camera.newK, None)  # rectified => no dist
+        proj = proj.reshape(-1, 2)
+        det = detected_corners_rect.reshape(-1, 2).astype(np.float32)
+        err = np.linalg.norm(proj - det, axis=1)
+        return float(err.mean()), float(err.std())
+
 
     def detect_aruco(self, frame_bgr, draw=True):
         """
@@ -45,11 +59,9 @@ class NeedleDetect:
         relative to that marker (treated as world).
         Returns a dict or None if not found.
         """
-        # 1) Rectify (fisheye -> pinhole-like) using Camera; this builds self.camera.newK
         rect = self.camera.undistort_image(frame_bgr)
         gray = cv.cvtColor(rect, cv.COLOR_BGR2GRAY)
 
-        # 2) Detect markers
         corners, ids, _ = cv.aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
         if ids is None or len(ids) == 0:
             self.aruco_pose = None
@@ -57,28 +69,24 @@ class NeedleDetect:
             self.camera_R_world = None
             return None
 
-        # 3) Pose for single markers (marker->camera), using rectified intrinsics
         rvecs, tvecs, _objPts = cv.aruco.estimatePoseSingleMarkers(
-            corners, self.marker_length, self.camera.newK, None  # distortion is None after rectification
+            corners, self.marker_length, self.camera.newK, None
         )
 
-        # (If multiple markers are visible, pick the first or apply your own selection strategy)
         rvec = rvecs[0].reshape(3, 1)
         tvec = tvecs[0].reshape(3, 1)
-        T_mc = rvec_tvec_to_T(rvec, tvec)    # marker->camera
-        T_cw = invert_T(T_mc)                # camera->marker(world)
+        T_mc = self.rvec_tvec_to_T(rvec, tvec)    # marker->camera
+        T_cw = self.invert_T(T_mc)                # camera->marker(world)
 
-        # Camera position in world (marker) coords: the translation of T_cw
         cam_pos_w = T_cw[:3, 3]
-        # Camera rotation in world coords: R_wc
         R_wc = T_cw[:3, :3]
 
-        # 4) Draw overlays
         if draw:
             cv.aruco.drawDetectedMarkers(rect, corners, ids)
             cv.drawFrameAxes(rect, self.camera.newK, None, rvec, tvec, self.draw_axes_len)
 
-        # 5) Save & return
+        proj_error = self.aruco_reproj_rms(rvec, tvec, np.array(corners))
+
         self.camera_pos = cam_pos_w.copy()
         self.camera_R_world = R_wc.copy()
         self.aruco_pose = {
@@ -87,20 +95,18 @@ class NeedleDetect:
             "T_marker_to_cam": T_mc,    # 4x4
             "T_cam_to_world": T_cw,     # 4x4 (world == marker frame)
             "camera_pos_world": cam_pos_w,  # (x,y,z) [m]
-            "camera_R_world": R_wc
+            "camera_R_world": R_wc,
+            "error": proj_error
         }
 
         return {"image": rect, "pose": self.aruco_pose}
 
-
     @staticmethod
     def auto_canny(img, sigma=0.33):
-        # automatic thresholds based on median
         v = np.median(img)
         lo = int(max(0, (1.0 - sigma) * v))
         hi = int(min(255, (1.0 + sigma) * v))
         return cv.Canny(img, lo, hi, L2gradient=True)
-
 
     @staticmethod
     def fit_circle_least_squares(points):
@@ -135,122 +141,6 @@ class NeedleDetect:
         r = np.sqrt((x - xc) ** 2 + (y - yc) ** 2).mean()
         return True, (float(xc), float(yc)), float(r)
 
-
-    def detect_needle(self, frame_bgr, draw=True, curved=True):
-        """
-        Returns:
-          {
-            "image": rectified BGR with optional overlays,
-            "mask": binary mask of candidate needle pixels,
-            "centerline_pts": Nx2 float32 (possibly sparse sample),
-            "model": {"type": "line" or "arc", "params": ...},
-            "tip_px": (x,y) or None
-          }
-        """
-        rect = self.camera.undistort_image(frame_bgr)
-
-        # --- 1) Contrast boost ---
-        gray = cv.cvtColor(rect, cv.COLOR_BGR2GRAY)
-        clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        g = clahe.apply(gray)
-
-        # --- 2) Specular mask (bright + low saturation) ---
-        hsv = cv.cvtColor(rect, cv.COLOR_BGR2HSV)
-        H,S,V = cv.split(hsv)
-        # Thresholds to tune:
-        V_thr = 200   # high value
-        S_thr =  60   # low saturation (reflective)
-        spec = cv.inRange(hsv, (0,0,V_thr), (179,S_thr,255))
-
-        # --- 3) Edge/ridge cues ---
-        edges = self.auto_canny(g, sigma=0.33)
-        # White top-hat to enhance thin bright ridges
-        se = cv.getStructuringElement(cv.MORPH_RECT, (7,7))
-        tophat = cv.morphologyEx(g, cv.MORPH_TOPHAT, se)
-        _, th_bin = cv.threshold(tophat, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)
-
-        # --- 4) Combine and clean ---
-        combo = cv.bitwise_or(spec, th_bin)
-        combo = cv.bitwise_or(combo, edges)
-        combo = cv.morphologyEx(combo, cv.MORPH_CLOSE, cv.getStructuringElement(cv.MORPH_ELLIPSE,(3,3)), iterations=1)
-        combo = cv.morphologyEx(combo, cv.MORPH_OPEN,  cv.getStructuringElement(cv.MORPH_ELLIPSE,(3,3)), iterations=1)
-
-        # --- 5) Keep only the largest thin component (likely the needle) ---
-        num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(combo, connectivity=8)
-        if num_labels <= 1:
-            return {"image": rect, "mask": combo, "centerline_pts": None, "model": None, "tip_px": None}
-
-        # choose largest non-background
-        areas = stats[1:, cv.CC_STAT_AREA]
-        best_idx = 1 + int(np.argmax(areas))
-        mask = (labels == best_idx).astype(np.uint8)*255
-
-        # optional thinning to get centerline
-        # (ximgproc.thinning is great if available; fallback: distance ridge sampling)
-        try:
-            import cv2.ximgproc as xip
-            skel = xip.thinning(mask, thinningType=xip.THINNING_ZHANGSUEN)
-        except Exception:
-            # simple fallback: use edges intersected with mask
-            skel = cv.bitwise_and(edges, mask)
-
-        ys, xs = np.where(skel > 0)
-        centerline_pts = np.stack([xs, ys], axis=1).astype(np.float32) if len(xs)>0 else None
-
-        model = None
-        tip = None
-
-        if centerline_pts is None or len(centerline_pts) < 10:
-            return {"image": rect, "mask": mask, "centerline_pts": centerline_pts, "model": None, "tip_px": None}
-
-        if not curved:
-            # --- Straight model: fit a line ---
-            # returns unit direction vec and a point on line
-            [vx, vy, x0, y0] = cv.fitLine(centerline_pts, cv.DIST_L2, 0, 0.01, 0.01).flatten()
-            model = {"type": "line", "params": {"vx":float(vx), "vy":float(vy), "x0":float(x0), "y0":float(y0)}}
-
-            # project points to line and pick endpoint with max projection
-            v = np.array([vx, vy], dtype=np.float64)
-            p0 = np.array([x0, y0], dtype=np.float64)
-            projs = ((centerline_pts - p0) @ v).ravel()
-            end_idx = int(np.argmax(np.abs(projs)))
-            tip = tuple(centerline_pts[end_idx].astype(int))
-            if draw:
-                p1 = (int(x0 - 500*vx), int(y0 - 500*vy))
-                p2 = (int(x0 + 500*vx), int(y0 + 500*vy))
-                cv.line(rect, p1, p2, (0,255,0), 1, cv.LINE_AA)
-        else:
-            # --- Curved model: fit a circle (arc) ---
-            # optionally subsample to speed up / denoise
-            if len(centerline_pts) > 2000:
-                centerline_pts = centerline_pts[::int(len(centerline_pts)/2000)]
-            ok, c, r = self.fit_circle_least_squares(centerline_pts)
-            if ok:
-                model = {"type": "arc", "params": {"cx":c[0], "cy":c[1], "r":r}}
-                if draw:
-                    cv.circle(rect, (int(c[0]), int(c[1])), int(r), (0,255,0), 1, cv.LINE_AA)
-                # pick tip: furthest point along arc boundary closest to image bright spot
-                # simple heuristic: choose endpoint of skeleton farthest from circle center
-                dists = np.linalg.norm(centerline_pts - np.array(c, dtype=np.float32), axis=1)
-                idx = int(np.argmax(dists))
-                tip = tuple(centerline_pts[idx].astype(int))
-
-        # draw overlays
-        if draw:
-            # mask contour
-            cnts, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-            cv.drawContours(rect, cnts, -1, (255,0,0), 1, cv.LINE_AA)
-            if tip is not None:
-                cv.circle(rect, tip, 4, (0,0,255), -1, cv.LINE_AA)
-
-        return {
-            "image": rect,
-            "mask": mask,
-            "centerline_pts": centerline_pts,
-            "model": model,
-            "tip_px": tip
-        }
-
     def pose_from_T_cam_to_world(self, T_cw):
         """Extract rotation R_wc and camera center C_w from camera->world 4x4."""
         R_wc = T_cw[:3, :3]
@@ -271,11 +161,9 @@ class NeedleDetect:
         Returns:
           X_w: 3D point in world coords (np.array shape (3,)), or None if parallel.
         """
-        # Unpack intrinsics
         K = newK.astype(np.float64)
         Kinv = np.linalg.inv(K)
 
-        # Build normalized ray in camera coords
         x, y = float(px[0]), float(px[1])
         p_cam_dir = Kinv @ np.array([x, y, 1.0], dtype=np.float64)  # direction (not normalized)
         p_cam_dir = p_cam_dir / np.linalg.norm(p_cam_dir)
@@ -285,7 +173,6 @@ class NeedleDetect:
         # Ray in world: X_w(t) = C_w + t * d_w
         d_w = (R_wc @ p_cam_dir)  # rotate direction into world
 
-        # Plane parsing
         if plane is not None:
             key, a, b = plane
             if key == 'nd':
@@ -314,24 +201,128 @@ class NeedleDetect:
         X_w = C_w + t * d_w
         return X_w
 
+    def set_plane_parallel_to_marker(self, offset_m: float):
+        """
+        Define the intersection plane as parallel to the ArUco marker plane (Z=0 in marker/world),
+        offset by 'offset_m' meters along +Z (marker normal).
+        Use a negative value to go 'behind' the tag (along -Z).
+        """
+        self._plane_n = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        self._plane_p0 = np.array([0.0, 0.0, float(offset_m)], dtype=np.float64)
+
+    def tip_px_to_world(self, tip_px_rect):
+        """
+        Intersect pixel ray with the currently selected plane.
+        Falls back to the marker plane (Z=0) if no plane was set.
+        """
+        if (self.aruco_pose is None) or (self.camera.newK is None):
+            return None, False
+
+        T_cw = self.aruco_pose["T_cam_to_world"]
+        if hasattr(self, "_plane_n") and hasattr(self, "_plane_p0"):
+            X_w = self.pixel_to_plane_3d(
+                px=tip_px_rect, newK=self.camera.newK, T_cam_to_world=T_cw,
+                plane=('np0', self._plane_n, self._plane_p0)
+            )
+        else:
+            X_w = self.pixel_to_plane_3d(
+                px=tip_px_rect, newK=self.camera.newK, T_cam_to_world=T_cw,
+                plane=('np0', np.array([0, 0, 1.0]), np.array([0, 0, 0]))
+            )
+        return X_w, (X_w is not None)
+
+    def project_world_point_to_rect_px(self, X_w, rvec, tvec, K):
+        """
+        X_w: (3,) in marker/world coords (meters)
+        rvec,tvec: marker->camera pose from your ArUco (same as you already have)
+        K: rectified intrinsics (nd.camera.newK)
+        Returns integer pixel tuple (x,y) on the rectified image.
+        """
+        X = np.asarray(X_w, dtype=np.float32).reshape(1,1,3)
+        pts2d, _ = cv.projectPoints(X, rvec, tvec, K, distCoeffs=None)
+        x, y = pts2d.reshape(2)
+        return int(round(x)), int(round(y))
+
+    def draw_vector_center_to_tip(self, rect_img, center_px, tip_px, color=(0,255,255), thickness=1):
+        """
+        Draws a thin arrow from ArUco center pixel -> needle tip pixel on the rectified image.
+        """
+        vis = rect_img.copy()
+        cx, cy = map(int, center_px)
+        tx, ty = map(int, tip_px)
+
+        cv.circle(vis, (cx, cy), 3, (0,255,255), -1, cv.LINE_AA)
+        cv.circle(vis, (tx, ty), 4, (0,0,255),   -1, cv.LINE_AA)
+
+        cv.arrowedLine(vis, (cx, cy), (tx, ty), color, thickness, cv.LINE_AA, tipLength=0.02)
+        return vis
+
+    def run_needle_detecion(self):
+        templates = load_templates("templates")
+        if not templates:
+            print("No templates found in ./templates")
+            raise SystemExit
+        tpl_feats = load_template_features(templates)
+
+        image_paths = sorted(glob.glob(os.path.join("test_images", "*.jpg")))
+        for path in image_paths:
+            img = cv.imread(path)
+            if img is None:
+                continue
+
+            rect = self.camera.undistort_image(img)
+            ar = self.detect_aruco(img, draw=True)
+            if ar:
+                print(f"Camera pos (m): {ar['pose']['camera_pos_world']}")
+                print(f"Projection Error: {ar['pose']['error']}")
+            rect = ar["image"] if ar else rect
+
+            # ROI + feature matching on the SAME rectified image
+            roi = build_roi_mask(rect, ROI_PARAMS)
+            best = match_templates_feature(rect, tpl_feats, roi_mask=roi, use_roi=True)
+            if best is None:
+                print("No match with ROI; retrying without ROI…")
+                best = match_templates_feature(rect, tpl_feats, roi_mask=None, use_roi=False)
+            if best is None or best.get("tip_px_scene") is None:
+                print(f"No needle tip found in {os.path.basename(path)}")
+                left = rect.copy()
+                left[roi == 0] = 0
+                cv.imshow("ArUco center → Needle tip", rect)
+                if cv.waitKey(0) & 0xFF in (27, ord('q')):
+                    break
+                continue
+
+            tip_px_rect = best["tip_px_scene"]
+            print("Corrected Needle tip position: ", tip_px_rect)
+            self.set_plane_parallel_to_marker(offset_m=0.03)
+
+            X_w, ok = self.tip_px_to_world(tip_px_rect)
+            dist_m = None
+            if ok:
+                dist_m = float(np.linalg.norm(X_w - np.array([0.0, 0.0, 0.0])))
+                print(f"Tip world: {X_w} | distance to marker origin: {dist_m * 1000:.1f} mm")
+            else:
+                print("Ray parallel to plane (no intersection)")
+
+            if ar:
+                rvec = self.aruco_pose["rvec_m2c"]
+                tvec = self.aruco_pose["tvec_m2c"]
+
+                center_px = self.project_world_point_to_rect_px([0.0, 0.0, 0.0], rvec, tvec, self.camera.newK)
+                vis = self.draw_vector_center_to_tip(rect, center_px, tip_px_rect, color=(0, 255, 255), thickness=1)
+
+                if dist_m is not None:
+                    midx = int((center_px[0] + tip_px_rect[0]) / 2)
+                    midy = int((center_px[1] + tip_px_rect[1]) / 2)
+                    cv.putText(vis, f"{dist_m * 1000:.1f} mm", (midx + 6, midy - 6),
+                               cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv.LINE_AA)
+
+            cv.imshow("ArUco center → Needle tip", vis)
+            cv.waitKey(0)
+
+        cv.destroyAllWindows()
+
+
 if __name__ == "__main__":
-    needle_spec = {
-        "type": "arc",  # "line" or "arc"
-        "radius_range": (8e-3, 25e-3),  # meters, if you’ll lift to 3D (or pixels if staying 2D)
-        "length_range_px": (80, 600),
-        "thickness_px": 3,  # expected visual thickness after rectification
-        "specular": {"V_thr": 200, "S_thr": 60},
-        "tophat_kernel": 7,  # odd size in px
-        "morph_open": 1,  # iterations
-        "morph_close": 1,  # iterations
-        "curvature_sign": None,  # +1, -1, or None if unknown
-        "prefer_tip_brightest": True
-    }
-
-    nd = NeedleDetect(marker_length_m=0.018, needle_spec=needle_spec)
-
-    img = cv.imread("test_images/test_001.jpg")
-    ar = nd.detect_aruco(img, draw=True)
-    dn = nd.detect_needle(img, draw=True)
-    cv.imshow("result", dn["image"])
-    cv.waitKey(0)
+    nd = NeedleDetect(marker_length_m=0.018)
+    nd.run_needle_detecion()
