@@ -14,6 +14,8 @@ class NeedleDetect:
         self.aruco_pose = None       # dict with rvec, tvec, T_mc, T_cw
         self.needle_pos = None
 
+        self.template_detector = TemplateMasks()
+
         self.marker_length = marker_length_m
         self.draw_axes_len = draw_axes_len
 
@@ -258,11 +260,11 @@ class NeedleDetect:
         return vis
 
     def run_needle_detecion(self):
-        templates = load_templates("templates")
+        templates = self.template_detector.load_templates("templates")
         if not templates:
             print("No templates found in ./templates")
             raise SystemExit
-        tpl_feats = load_template_features(templates)
+        tpl_feats = self.template_detector.load_template_features(templates)
 
         image_paths = sorted(glob.glob(os.path.join("test_images", "*.jpg")))
         for path in image_paths:
@@ -278,11 +280,11 @@ class NeedleDetect:
             rect = ar["image"] if ar else rect
 
             # ROI + feature matching on the SAME rectified image
-            roi = build_roi_mask(rect, ROI_PARAMS)
-            best = match_templates_feature(rect, tpl_feats, roi_mask=roi, use_roi=True)
+            roi = self.template_detector.build_roi_mask(rect)
+            best = self.template_detector.match_templates_feature(rect, tpl_feats, roi_mask=roi, use_roi=True)
             if best is None:
                 print("No match with ROI; retrying without ROI…")
-                best = match_templates_feature(rect, tpl_feats, roi_mask=None, use_roi=False)
+                best = self.template_detector.match_templates_feature(rect, tpl_feats, roi_mask=None, use_roi=False)
             if best is None or best.get("tip_px_scene") is None:
                 print(f"No needle tip found in {os.path.basename(path)}")
                 left = rect.copy()
