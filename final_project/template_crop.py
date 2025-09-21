@@ -297,7 +297,6 @@ if __name__ == "__main__":
     if create_templates:
         images = [os.path.join("test_images", image) for image in os.listdir("test_images")]
         crop_templates(images)
-    quit()
 
     templates = load_templates("templates")
     if not templates:
