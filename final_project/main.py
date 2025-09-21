@@ -1,5 +1,8 @@
 from camera import Camera
-from patchmask import *
+import cv2 as cv
+import numpy as np
+import glob, os
+from patchmask import TemplateMasks
 
 
 class NeedleDetect:
@@ -21,6 +24,9 @@ class NeedleDetect:
 
         self.aruco_dict = cv.aruco.getPredefinedDictionary(dict_name)
         self.aruco_params = cv.aruco.DetectorParameters()
+
+        self._plane_n = None
+        self._plane_p0 = None
 
     @staticmethod
     def rvec_tvec_to_T(rvec, tvec):
@@ -233,7 +239,8 @@ class NeedleDetect:
             )
         return X_w, (X_w is not None)
 
-    def project_world_point_to_rect_px(self, X_w, rvec, tvec, K):
+    @staticmethod
+    def project_world_point_to_rect_px(X_w, rvec, tvec, K):
         """
         X_w: (3,) in marker/world coords (meters)
         rvec,tvec: marker->camera pose from your ArUco (same as you already have)
@@ -245,7 +252,8 @@ class NeedleDetect:
         x, y = pts2d.reshape(2)
         return int(round(x)), int(round(y))
 
-    def draw_vector_center_to_tip(self, rect_img, center_px, tip_px, color=(0,255,255), thickness=1):
+    @staticmethod
+    def draw_vector_center_to_tip(rect_img, center_px, tip_px, color=(0,255,255), thickness=1):
         """
         Draws a thin arrow from ArUco center pixel -> needle tip pixel on the rectified image.
         """
@@ -259,72 +267,122 @@ class NeedleDetect:
         cv.arrowedLine(vis, (cx, cy), (tx, ty), color, thickness, cv.LINE_AA, tipLength=0.02)
         return vis
 
-    def run_needle_detecion(self):
+    def run_needle_detection(self,
+                            static=True,
+                            image_glob="test_images/*.jpg",
+                            cam_index=0,
+                            match_every=1,  # run heavy template match every N frames (1 = every frame)
+                            plane_offset_m=0.029):
+
         templates = self.template_detector.load_templates("templates")
         if not templates:
             print("No templates found in ./templates")
-            raise SystemExit
+            return
         tpl_feats = self.template_detector.load_template_features(templates)
 
-        image_paths = sorted(glob.glob(os.path.join("test_images", "*.jpg")))
-        for path in image_paths:
-            img = cv.imread(path)
-            if img is None:
-                continue
+        def frames_from_images(pattern):
+            for path in sorted(glob.glob(pattern)):
+                img = cv.imread(path)
+                if img is None: continue
+                yield img, os.path.basename(path)
 
-            rect = self.camera.undistort_image(img)
-            ar = self.detect_aruco(img, draw=True)
-            if ar:
-                print(f"Camera pos (m): {ar['pose']['camera_pos_world']}")
-                print(f"Projection Error: {ar['pose']['error']}")
-            rect = ar["image"] if ar else rect
+        def frames_from_camera(index):
+            cap = cv.VideoCapture(index)
+            if not cap.isOpened():
+                print(f"Could not open camera {index}")
+                return
+            try:
+                while True:
+                    ok, frame = cap.read()
+                    if not ok: break
+                    yield frame, None
+            finally:
+                cap.release()
 
-            # ROI + feature matching on the SAME rectified image
-            roi = self.template_detector.build_roi_mask(rect)
-            best = self.template_detector.match_templates_feature(rect, tpl_feats, roi_mask=roi, use_roi=True)
-            if best is None:
-                print("No match with ROI; retrying without ROI…")
-                best = self.template_detector.match_templates_feature(rect, tpl_feats, roi_mask=None, use_roi=False)
-            if best is None or best.get("tip_px_scene") is None:
-                print(f"No needle tip found in {os.path.basename(path)}")
-                left = rect.copy()
-                left[roi == 0] = 0
-                cv.imshow("ArUco center → Needle tip", rect)
-                if cv.waitKey(0) & 0xFF in (27, ord('q')):
+        source = frames_from_images(image_glob) if static else frames_from_camera(cam_index)
+
+        win = "ArUco center → Needle tip"
+        cv.namedWindow(win, cv.WINDOW_NORMAL)
+
+        last_tip = None
+        frame_id = 0
+        try:
+            for img, name in source:
+                ar = self.detect_aruco(img, draw=True)
+                if ar is not None:
+                    rect = ar["image"]
+                    cam_pos = ar["pose"]["camera_pos_world"]
+                    print(f"Camera pos (m): {cam_pos}")
+                else:
+                    rect = self.camera.undistort_image(img)
+
+                roi = self.template_detector.build_roi_mask(rect)
+                need_match = (frame_id % max(1, int(match_every)) == 0) or (last_tip is None)
+                best = None
+                if need_match:
+                    best = self.template_detector.match_templates_feature(rect, tpl_feats, roi_mask=roi, use_roi=True)
+                    if best is None:
+                        print("No match with ROI; retrying without ROI…")
+                        best = self.template_detector.match_templates_feature(rect, tpl_feats, roi_mask=None,
+                                                                              use_roi=False)
+                    if best is not None and best.get("tip_px_scene") is not None:
+                        last_tip = best["tip_px_scene"]
+
+                if last_tip is None:
+                    cv.imshow(win, rect)
+                    key = cv.waitKey(0 if static else 1) & 0xFF
+                    if key in (27, ord('q')): break
+                    frame_id += 1
+                    continue
+
+                tip_px_rect = last_tip
+
+                self.set_plane_parallel_to_marker(offset_m=plane_offset_m)
+                X_w, ok = self.tip_px_to_world(tip_px_rect)
+                dist_m = None
+                if ok:
+                    dist_m = float(np.linalg.norm(X_w - np.array([0.0, 0.0, 0.0])))
+                    print(f"{name or '[live]'} | Tip world: {X_w} | dist: {dist_m * 1000:.1f} mm")
+                else:
+                    print("Ray parallel to plane — no intersection")
+
+                vis = rect.copy()
+                if ar is not None:
+                    rvec = self.aruco_pose["rvec_m2c"]
+                    tvec = self.aruco_pose["tvec_m2c"]
+                    center_px = self.project_world_point_to_rect_px([0.0, 0.0, 0.0], rvec, tvec, self.camera.newK)
+                    vis = self.draw_vector_center_to_tip(vis, center_px, tip_px_rect, color=(0, 255, 255), thickness=1)
+                    if dist_m is not None:
+                        midx = int((center_px[0] + tip_px_rect[0]) / 2)
+                        midy = int((center_px[1] + tip_px_rect[1]) / 2)
+                        cv.putText(vis, f"{dist_m * 1000:.1f} mm", (midx + 6, midy - 6),
+                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv.LINE_AA)
+                else:
+                    tx, ty = map(int, tip_px_rect)
+                    cv.circle(vis, (tx, ty), 5, (0, 0, 255), -1, cv.LINE_AA)
+                    cv.putText(vis, "No ArUco", (10, 25), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv.LINE_AA)
+
+                if name:
+                    cv.putText(vis, name, (10, vis.shape[0] - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1,
+                               cv.LINE_AA)
+                cv.imshow(win, vis)
+
+                key = cv.waitKey(0 if static else 1) & 0xFF
+                if key in (27, ord('q')):
                     break
-                continue
+                elif not static and key == ord('p'):
+                    while True:
+                        k2 = cv.waitKey(20) & 0xFF
+                        if k2 in (27, ord('q'), ord('p')):
+                            if k2 in (27, ord('q')):
+                                raise SystemExit
+                            break
 
-            tip_px_rect = best["tip_px_scene"]
-            print("Corrected Needle tip position: ", tip_px_rect)
-            self.set_plane_parallel_to_marker(offset_m=0.03)
-
-            X_w, ok = self.tip_px_to_world(tip_px_rect)
-            dist_m = None
-            if ok:
-                dist_m = float(np.linalg.norm(X_w - np.array([0.0, 0.0, 0.0])))
-                print(f"Tip world: {X_w} | distance to marker origin: {dist_m * 1000:.1f} mm")
-            else:
-                print("Ray parallel to plane (no intersection)")
-
-            if ar:
-                rvec = self.aruco_pose["rvec_m2c"]
-                tvec = self.aruco_pose["tvec_m2c"]
-
-                center_px = self.project_world_point_to_rect_px([0.0, 0.0, 0.0], rvec, tvec, self.camera.newK)
-                vis = self.draw_vector_center_to_tip(rect, center_px, tip_px_rect, color=(0, 255, 255), thickness=1)
-
-                if dist_m is not None:
-                    midx = int((center_px[0] + tip_px_rect[0]) / 2)
-                    midy = int((center_px[1] + tip_px_rect[1]) / 2)
-                    cv.putText(vis, f"{dist_m * 1000:.1f} mm", (midx + 6, midy - 6),
-                               cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv.LINE_AA)
-
-            cv.imshow("ArUco center → Needle tip", vis)
-            cv.waitKey(0)
-
-        cv.destroyAllWindows()
+                frame_id += 1
+        finally:
+            cv.destroyAllWindows()
 
 
 if __name__ == "__main__":
     nd = NeedleDetect(marker_length_m=0.018)
-    nd.run_needle_detecion()
+    nd.run_needle_detection()
