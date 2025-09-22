@@ -129,3 +129,19 @@ project/
 - Deep Learning für robustere Nadeldetektion.
 - Automatische Schätzung des Offsets Δz durch Kalibrierung.
 - Integration in ein Echtzeit-Tracking-Framework.
+
+## Referenzen
+
+- ChArUco Board Calibration:    
+    - https://www.deepen.ai/blog/what-is-a-charuco-board-and-why-you-should-use-it
+- Fisheye Endoscope distortion:
+    - https://www.researchgate.net/figure/An-example-of-distorted-image-by-an-endoscope-Fish-eye-lens-utilized-in-endoscope-causes_fig1_230851109
+- Previous Works on needle tracking:
+    - https://pmc.ncbi.nlm.nih.gov/articles/PMC4465878/
+    - https://arxiv.org/pdf/2302.05034
+- ArUco Detection:
+    - https://docs.opencv.org/4.x/d5/dae/tutorial_aruco_detection.html
+- Ray-Plane Intersection:
+    - https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-plane-and-ray-disk-intersection.html
+- Point Transfer:
+    - https://www.r-5.org/files/books/computers/algo-list/image-processing/vision/Richard_Hartley_Andrew_Zisserman-Multiple_View_Geometry_in_Computer_Vision-EN.pdf
