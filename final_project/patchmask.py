@@ -176,7 +176,7 @@ class TemplateMasks:
                 if T["des"] is None or len(T["kps"]) == 0:
                     continue
 
-                bf = cv.BFMatcher(norm_scene, crossCheck=False)
+                bf = cv.BFMatcher(norm_scene, crossCheck=False) # BruteForce Matcher
                 knn = bf.knnMatch(T["des"], dei, k=2)
                 good = [m for m, n in knn if n is not None and m.distance < ratio * n.distance]
 

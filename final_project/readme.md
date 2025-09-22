@@ -1,7 +1,7 @@
-# Nadel-Detektion mit ArUco-Referenz
+# Erkennung der Position einer Chirurgischen Nadel mit hilfe einer Endoskopkamera zur Unterstützung bei robotergestützter Chirurgie
 
 Dieses Projekt beschäftigt sich mit der automatisierten Erkennung und 3D-Lokalisierung einer Nadelspitze in medizinischen Testbildern.  
-Als Referenz dient ein auf dem Pad angebrachter **ArUco-Marker**, der die Weltkoordinaten definiert.  
+Als Referenz dient ein am Silikonpad angebrachter **ArUco-Marker**, der die Weltkoordinaten definiert.  
 Die Pipeline kombiniert klassische Bildverarbeitung (ROI-Maskierung, Template-Matching, Feature-Matching) mit Kamerakalibrierung und 3D-Geometrie.
 
 ---
@@ -42,7 +42,7 @@ Die Pipeline kombiniert klassische Bildverarbeitung (ROI-Maskierung, Template-Ma
   - Optional: Masken und Markierung der Nadelspitze im Template.
   - Extraktion von Deskriptoren (SIFT, AKAZE, ORB).
 - Laufzeit:
-  - ROI wird auf Templates gematcht.
+  - ROI wird auf Bild gematcht.
   - Homographie oder affine Transformation (RANSAC) wird geschätzt.
   - Die gespeicherte Nadelspitze im Template wird mittels Transformation ins Szenenbild projiziert → `tip_px_scene`.
 
@@ -111,11 +111,17 @@ project/
 └── README.md              # (dieses Dokument)
 ```
 
+
+---
+
 ## Bekannte Einschränkungen
 
 - Nadel liegt nicht exakt in Marker-Ebene → Offset muss manuell eingestellt werden.
 - Feature-Matching empfindlich gegenüber Beleuchtung und Reflexionen.
 - Genauigkeit hängt stark von Kalibrierung und Marker-Detektion ab.
+
+
+---
 
 ## Mögliche Erweiterungen
 
