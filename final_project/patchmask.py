@@ -101,91 +101,141 @@ class TemplateMasks:
 
     def match_templates_feature(self, scene_bgr, tpl_feats, roi_mask=None,
                                 use_roi=True,
-                                ratio=0.9,          # looser: keep more tentative matches
-                                xcheck=True,        # also do cross-check and union
-                                ransac_thr=6.0,     # more forgiving reproj (px)
-                                min_good=6,         # minimal tentative matches
-                                min_inliers=6):     # minimal inliers to accept
-        scene_u8 = self._prep_gray_u8(scene_bgr)
-        scene_mask = None
-        if use_roi and roi_mask is not None:
-            scene_mask = (roi_mask > 0).astype(np.uint8)
-            if scene_mask.shape != scene_u8.shape:
-                scene_mask = cv.resize(scene_mask, (scene_u8.shape[1], scene_u8.shape[0]),
-                                       interpolation=cv.INTER_NEAREST)
+                                ratio=0.9,
+                                xcheck=True,
+                                ransac_thr=6.0,
+                                min_good=6,
+                                min_inliers=6,
+                                scene_scales=(0.8, 1.0, 1.25)):  # <<< NEW
+        """
+        Multi-scale version: tries the scene at several scales and returns the best match
+        mapped back into the original-resolution coordinate system.
+        """
 
+        def _to_u8gray(img):
+            return self._prep_gray_u8(img)
+
+        def _resize(img, s):
+            h, w = img.shape[:2]
+            return cv.resize(img, (int(round(w * s)), int(round(h * s))), interpolation=cv.INTER_LINEAR)
+
+        def _compose_scale_back(A_2x3, s):
+            """Map affine (template->scaled_scene) back to original scene coords."""
+            A = np.vstack([A_2x3, [0, 0, 1]])  # 3x3
+            S_inv = np.array([[1 / s, 0, 0],
+                              [0, 1 / s, 0],
+                              [0, 0, 1]], dtype=np.float64)
+            A_orig = S_inv @ A
+            return A_orig[:2, :]
+
+        def _affine_rms(src_inl, A, dst_inl):
+            """RMS reprojection (px) for inliers."""
+            src2 = cv.transform(src_inl[None, ...], A)[0]  # (N,2)
+            err = np.linalg.norm(src2 - dst_inl, axis=1)
+            return float(np.sqrt(np.mean(err * err))) if len(err) else 1e9
+
+        # --- Precompute scene pyramids (gray + ROI) ---
+        scene_u8_full = _to_u8gray(scene_bgr)
+        roi_full = None
+        if use_roi and roi_mask is not None:
+            roi_full = (roi_mask > 0).astype(np.uint8)
+            if roi_full.shape != scene_u8_full.shape:
+                roi_full = cv.resize(roi_full, (scene_u8_full.shape[1], scene_u8_full.shape[0]),
+                                     interpolation=cv.INTER_NEAREST)
+
+        pyramids = []
+        for s in scene_scales:
+            g = scene_u8_full if s == 1.0 else _resize(scene_u8_full, s)
+            r = None if roi_full is None else (roi_full if s == 1.0 else _resize(roi_full, s))
+            pyramids.append((s, g, r))
+
+        # --- Build detector chain once ---
         dets = self._make_detector_chain()
 
-        # Scene features
-        kpi = []; dei = None; used_scene = "none"; norm_scene = None
-        for name, det in dets:
-            kpi, dei = self._detect_desc(det, scene_u8, scene_mask)
-            if dei is not None and len(kpi) > 0:
-                used_scene = name
-                norm_scene = self._norm_for_matcher(name)
-                break
-        print(f"[SCENE] det={used_scene} kps={len(kpi)} (ROI on={use_roi and scene_mask is not None})")
-        if dei is None or len(kpi) == 0:
-            return None
-
-        best = None
-        for i, T in enumerate(tpl_feats):
-            if T["des"] is None or len(T["kps"]) == 0:
-                print(f"[TPL {i}] no descriptors")
+        best_overall = None
+        # Iterate scales
+        for s, scene_u8, scene_mask in pyramids:
+            # Scene features at this scale
+            kpi = []
+            dei = None
+            used_scene = "none"
+            norm_scene = None
+            for name, det in dets:
+                kpi, dei = self._detect_desc(det, scene_u8, scene_mask)
+                if dei is not None and len(kpi) > 0:
+                    used_scene = name
+                    norm_scene = self._norm_for_matcher(name)
+                    break
+            print(
+                f"[SCENE scale={s:.2f}] det={used_scene} kps={len(kpi)} (ROI on={use_roi and scene_mask is not None})")
+            if dei is None or len(kpi) == 0:
                 continue
 
-            bf = cv.BFMatcher(norm_scene, crossCheck=False)
+            # Try all templates against this scale
+            for i, T in enumerate(tpl_feats):
+                if T["des"] is None or len(T["kps"]) == 0:
+                    continue
 
-            # --- KNN ratio ---
-            knn = bf.knnMatch(T["des"], dei, k=2)
-            good = [m for m,n in knn if n is not None and m.distance < ratio*n.distance]
+                bf = cv.BFMatcher(norm_scene, crossCheck=False)
+                knn = bf.knnMatch(T["des"], dei, k=2)
+                good = [m for m, n in knn if n is not None and m.distance < ratio * n.distance]
 
-            if xcheck:
-                bf_x = cv.BFMatcher(norm_scene, crossCheck=True)
-                xmatches = bf_x.match(T["des"], dei)
-                # union: keep all KNN good plus xcheck
-                idx_pairs = {(m.queryIdx, m.trainIdx) for m in good}
-                for xm in xmatches:
-                    idx_pairs.add((xm.queryIdx, xm.trainIdx))
-                good = [cv.DMatch(_queryIdx=q, _trainIdx=t, _imgIdx=0, _distance=0) for (q,t) in idx_pairs]
+                if xcheck:
+                    bf_x = cv.BFMatcher(norm_scene, crossCheck=True)
+                    xmatches = bf_x.match(T["des"], dei)
+                    idx_pairs = {(m.queryIdx, m.trainIdx) for m in good}
+                    for xm in xmatches:
+                        idx_pairs.add((xm.queryIdx, xm.trainIdx))
+                    good = [cv.DMatch(_queryIdx=q, _trainIdx=t, _imgIdx=0, _distance=0) for (q, t) in idx_pairs]
 
-            if len(good) < min_good:
-                continue
+                if len(good) < min_good:
+                    continue
 
-            src = np.float32([T["kps"][m.queryIdx].pt for m in good]).reshape(-1,1,2)
-            dst = np.float32([kpi[m.trainIdx].pt for m in good]).reshape(-1,1,2)
+                src = np.float32([T["kps"][m.queryIdx].pt for m in good]).reshape(-1, 1, 2)  # template
+                dst = np.float32([kpi[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)  # scaled scene
 
-            A, inliers = cv.estimateAffinePartial2D(src, dst,
-                                                    method=cv.RANSAC,
-                                                    ransacReprojThreshold=ransac_thr,
-                                                    maxIters=4000, confidence=0.995, refineIters=20)
-            inl = int(inliers.ravel().sum()) if (inliers is not None) else 0
+                A_s, inliers = cv.estimateAffinePartial2D(
+                    src, dst, method=cv.RANSAC, ransacReprojThreshold=ransac_thr,
+                    maxIters=4000, confidence=0.995, refineIters=20
+                )
+                if A_s is None or inliers is None:
+                    continue
+                inl_mask = inliers.ravel().astype(bool)
+                inl = int(inl_mask.sum())
+                if inl < min_inliers:
+                    continue
 
-            if inl < min_inliers or A is None:
-                continue
+                # Score with reprojection RMS for quality
+                rms = _affine_rms(src[inl_mask].reshape(-1, 2), A_s, dst[inl_mask].reshape(-1, 2))
+                score = inl / (rms + 1e-6)
 
-            # project template box with affine
-            box = T["box"].reshape(-1, 2).astype(np.float32)  # 4x2
-            box_proj = cv.transform(box[None, ...], A)[0].astype(int).reshape(-1, 1, 2)
+                # Map affine back to original scene coords
+                A_orig = _compose_scale_back(A_s, s)
 
-            # Warp stored template tip to scene
-            tip_scene = None
-            if T.get("tip_px") is not None:
-                tip_tpl = np.array([[T["tip_px"]]], dtype=np.float32)  # shape (1,1,2)
-                tip_scene_f = cv.transform(tip_tpl, A)[0, 0]  # (x,y) float
-                tip_scene = (float(tip_scene_f[0]), float(tip_scene_f[1]))
+                # Project box & tip in original coords
+                box = T["box"].reshape(-1, 2).astype(np.float32)
+                box_proj = cv.transform(box[None, ...], A_orig)[0].astype(int).reshape(-1, 1, 2)
 
-            if best is None or inl > best["inliers"]:
-                best = {
-                    "A": A,
+                tip_scene = None
+                if T.get("tip_px") is not None:
+                    tip_tpl = np.array([[T["tip_px"]]], dtype=np.float32)
+                    tip_scene_f = cv.transform(tip_tpl, A_orig)[0, 0]
+                    tip_scene = (float(tip_scene_f[0]), float(tip_scene_f[1]))
+
+                cand = {
+                    "A": A_orig,
                     "inliers": inl,
+                    "rms": rms,
+                    "score": score,
                     "tpl_idx": i,
                     "box": box_proj,
                     "scene_det": used_scene,
                     "tip_px_scene": tip_scene
                 }
+                if (best_overall is None) or (cand["score"] > best_overall["score"]):
+                    best_overall = cand
 
-        return best
+        return best_overall
 
     @staticmethod
     def draw_feature_match(vis, best):

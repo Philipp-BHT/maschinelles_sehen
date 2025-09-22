@@ -227,16 +227,10 @@ class NeedleDetect:
             return None, False
 
         T_cw = self.aruco_pose["T_cam_to_world"]
-        if hasattr(self, "_plane_n") and hasattr(self, "_plane_p0"):
-            X_w = self.pixel_to_plane_3d(
-                px=tip_px_rect, newK=self.camera.newK, T_cam_to_world=T_cw,
-                plane=('np0', self._plane_n, self._plane_p0)
-            )
-        else:
-            X_w = self.pixel_to_plane_3d(
-                px=tip_px_rect, newK=self.camera.newK, T_cam_to_world=T_cw,
-                plane=('np0', np.array([0, 0, 1.0]), np.array([0, 0, 0]))
-            )
+        X_w = self.pixel_to_plane_3d(
+            px=tip_px_rect, newK=self.camera.newK, T_cam_to_world=T_cw,
+            plane=('np0', self._plane_n, self._plane_p0)
+        )
         return X_w, (X_w is not None)
 
     @staticmethod
